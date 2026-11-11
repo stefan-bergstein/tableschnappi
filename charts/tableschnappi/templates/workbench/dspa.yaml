@@ -1,4 +1,4 @@
-{{- if .Values.workbench.enabled }}
+{{- if and .Values.workbench.enabled .Values.workbench.pipelines.enabled }}
 # v1, not v1alpha1. RHOAI 3.x serves this CRD at
 # datasciencepipelinesapplications.opendatahub.io/v1 only — a v1alpha1
 # manifest is rejected with "no matches for kind", which `helm template`

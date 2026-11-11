@@ -1,0 +1,49 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "tableschnappi.fullname" . }}-seed-mlflow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tableschnappi.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "1"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "tableschnappi.selectorLabels" . | nindent 8 }}
+        app: seed-mlflow
+    spec:
+      serviceAccountName: {{ include "tableschnappi.mlflowProxyService" . }}
+      {{- include "tableschnappi.imagePullSecrets" . | nindent 6 }}
+      restartPolicy: OnFailure
+      containers:
+        - name: seed
+          image: {{ include "tableschnappi.image" (list . "mlflowProxy") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python3
+            - -c
+            - |
+{{ .Files.Get "files/seed-mlflow.py" | indent 14 }}
+          env:
+            - name: MLFLOW_WORKSPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: MLFLOW_TRACKING_URI
+              value: {{ .Values.rhoai.mlflowUri | quote }}
+            - name: MLFLOW_EXPERIMENT
+              value: {{ .Values.rhoai.mlflowExperiment | quote }}
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          securityContext:
+            {{- include "tableschnappi.securityContext" . | nindent 12 }}
+{{- end }}

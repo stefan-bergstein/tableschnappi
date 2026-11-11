@@ -1,0 +1,11 @@
+{{- if .Values.assistant.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tableschnappi.fullname" . }}-assistant-settings
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tableschnappi.labels" . | nindent 4 }}
+data:
+  GUARDRAILS_ENABLED: {{ and .Values.guardrails.enabled .Values.guardrails.shieldsEnabled | quote }}
+{{- end }}

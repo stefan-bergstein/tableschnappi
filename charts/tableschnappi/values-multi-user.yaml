@@ -1,0 +1,55 @@
+# One release per namespace. Copy to my-values.yaml and replace the example inputs.
+# A platform administrator supplies projects, quotas, ingress policy, shared MLflow,
+# image-pull grants and model Secrets before the participant installs.
+rhoai:
+  appsDomain: apps.example.com
+  mlflowUri: https://rh-ai.apps.example.com/mlflow
+model:
+  mode: maas
+  endpoint: https://model.example.com
+  name: example-tool-calling-model
+  existingSecret: model-api-key
+  secretKey: api_key
+  extraBody: true
+image:
+  pullPolicy: IfNotPresent
+# Replace each placeholder with your built/mirrored digest.
+components:
+  frontend:
+    image: registry.example.com/lab/frontend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  backend:
+    image: registry.example.com/lab/backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  mcpServer:
+    image: registry.example.com/lab/mcp@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  mlflowProxy:
+    image: registry.example.com/lab/assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+workbench:
+  enabled: true
+  name: user01
+  username: user01
+  grantEdit: true
+  pipelines:
+    enabled: false
+  image: registry.redhat.io/rhoai/odh-workbench-jupyter-datascience-cpu-py312-rhel9@sha256:f69af2080601644b322ca63a3ca38a6dde2cca0b567681c39767e150a0194c0e
+  repoUrl: https://github.com/stefan-bergstein/tableschnappi.git
+  repoRef: 37d686e4d6945bcdffdea4f9bd407b600d3f940f
+guardrails:
+  enabled: true
+  shieldsEnabled: false
+aiAsset:
+  enabled: true
+genaiStudio:
+  enabled: false
+garak:
+  enabled: false
+resources:
+  workbench:
+    requests: {cpu: 100m, memory: 1Gi}
+    limits: {cpu: '1', memory: 2Gi}
+  backend:
+    requests: {cpu: 50m, memory: 128Mi}
+  mcpServer:
+    requests: {cpu: 50m, memory: 128Mi}
+  mlflowProxy:
+    requests: {cpu: 100m, memory: 384Mi}
+    limits: {cpu: '1', memory: 1Gi}

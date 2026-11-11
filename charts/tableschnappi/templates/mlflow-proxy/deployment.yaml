@@ -31,6 +31,10 @@ spec:
             {{- if .Values.mlflow.enabled }}
             - name: MLFLOW_TRACKING_URI
               value: {{ .Values.rhoai.mlflowUri | quote }}
+            - name: MLFLOW_WORKSPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: MLFLOW_TRACKING_AUTH
+              value: kubernetes-namespaced
             - name: MLFLOW_K8S_INTEGRATION
               value: "true"
             - name: MLFLOW_EXPERIMENT
@@ -47,8 +51,10 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "tableschnappi.modelSecretName" . }}
-                  key: token
+                  key: {{ .Values.model.secretKey | quote }}
             {{- end }}
+            - name: MODEL_EXTRA_BODY
+              value: {{ .Values.model.extraBody | quote }}
             - name: VLLM_MODEL
               value: {{ include "tableschnappi.modelName" . | quote }}
             - name: VLLM_URL
@@ -68,13 +74,20 @@ spec:
             - name: BACKEND_URL
               value: "http://{{ include "tableschnappi.backendService" . }}.{{ .Release.Namespace }}.svc.cluster.local:3001"
             - name: GUARDRAILS_ENABLED
-              value: {{ .Values.guardrails.enabled | quote }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "tableschnappi.fullname" . }}-assistant-settings
+                  key: GUARDRAILS_ENABLED
             - name: UPSTREAM_URL
               {{- if .Values.guardrails.enabled }}
               value: "http://{{ include "tableschnappi.fullname" . }}-guardrails.{{ .Release.Namespace }}.svc.cluster.local:80"
               {{- else }}
               value: {{ include "tableschnappi.modelEndpoint" . | quote }}
               {{- end }}
+          startupProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /health

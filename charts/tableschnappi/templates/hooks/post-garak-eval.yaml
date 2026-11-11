@@ -47,7 +47,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "tableschnappi.modelSecretName" . }}
-                  key: token
+                  key: {{ .Values.model.secretKey | quote }}
               {{- else }}
               # vLLM ignores the value but the OpenAI client requires one.
               value: EMPTY

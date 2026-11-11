@@ -110,26 +110,10 @@ jobs:
             fail=1
           fi
 
-          # The token Secret must outrank the pre-install hooks that mount it.
-          python3 - <<'PY' || fail=1
-          import yaml, sys
-          docs = [d for d in yaml.safe_load_all(open('/tmp/all.yaml')) if d]
-          def weight(d):
-              a = (d.get('metadata', {}).get('annotations') or {})
-              return int(a.get('helm.sh/hook-weight', 0)) if 'helm.sh/hook' in a else None
-          secret = next((d for d in docs if d['kind'] == 'Secret'), None)
-          waiter = next((d for d in docs if d['kind'] == 'Job'
-                         and 'wait-model' in d['metadata']['name']), None)
-          if secret and waiter:
-              sw, ww = weight(secret), weight(waiter)
-              if sw is None or ww is None or sw >= ww:
-                  print(f"::error::Model Secret (weight {sw}) must be a hook ordered "
-                        f"before wait-model (weight {ww}), or the install deadlocks.")
-                  sys.exit(1)
-              print(f"ok: Secret weight {sw} precedes wait-model weight {ww}")
-          PY
-
           exit $fail
+
+      - name: Multi-user chart regression checks
+        run: python3 charts/tableschnappi/tests/test_workshop.py
 
       - name: Required values must fail loudly, not render something broken
         run: |

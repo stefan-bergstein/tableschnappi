@@ -8,10 +8,8 @@ metadata:
     {{- include "tableschnappi.labels" . | nindent 4 }}
     app: wait-model
   annotations:
-    # Weight 2: after the MLflow wait/seed hooks (0 and 1), before anything
-    # that actually calls the model. Without this a wrong endpoint or a bad
-    # token only shows up later as a confusing chat or garak failure.
-    helm.sh/hook: pre-install,pre-upgrade
+    # Runs after release-owned Secrets and service accounts exist.
+    helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-weight: "2"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
@@ -32,7 +30,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "tableschnappi.modelSecretName" . }}
-                  key: token
+                  key: {{ .Values.model.secretKey | quote }}
           {{- end }}
           command:
             - /bin/sh

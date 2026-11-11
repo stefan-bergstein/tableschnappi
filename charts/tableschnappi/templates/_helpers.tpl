@@ -51,7 +51,11 @@ Usage: {{ include "tableschnappi.image" (list . "mcpServer") }}
 {{- $root := index . 0 }}
 {{- $key  := index . 1 }}
 {{- $comp := index $root.Values.components $key }}
-{{- printf "%s/%s:%s" $root.Values.image.registry $comp.repository $root.Values.image.tag }}
+{{- if $comp.image -}}
+{{- $comp.image -}}
+{{- else -}}
+{{- printf "%s/%s:%s" $root.Values.image.registry $comp.repository $root.Values.image.tag -}}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -138,4 +142,12 @@ Usage: {{- include "tableschnappi.imagePullSecrets" . | nindent 6 }}
 imagePullSecrets:
   {{- toYaml .Values.imagePullSecrets | nindent 2 }}
 {{- end }}
+{{- end }}
+
+{{/* Notebook, PVC and service-account identity within the release namespace. */}}
+{{- define "tableschnappi.workbenchName" -}}
+{{- default (printf "%s-workbench" (include "tableschnappi.fullname" .)) .Values.workbench.name -}}
+{{- end }}
+{{- define "tableschnappi.workbenchServiceAccount" -}}
+{{- default (include "tableschnappi.workbenchName" .) .Values.workbench.serviceAccountName -}}
 {{- end }}

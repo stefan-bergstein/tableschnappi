@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "tableschnappi.fullname" . }}-workbench
+  name: {{ include "tableschnappi.workbenchName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "tableschnappi.labels" . | nindent 4 }}
@@ -16,43 +16,69 @@ spec:
 apiVersion: kubeflow.org/v1
 kind: Notebook
 metadata:
-  name: {{ include "tableschnappi.fullname" . }}-workbench
+  name: {{ include "tableschnappi.workbenchName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "tableschnappi.labels" . | nindent 4 }}
     opendatahub.io/dashboard: "true"
   annotations:
     notebooks.opendatahub.io/inject-auth: "true"
-    opendatahub.io/username: admin
+    opendatahub.io/username: {{ .Values.workbench.username | quote }}
+    {{- if .Values.mlflow.enabled }}
+    opendatahub.io/mlflow-instance: {{ .Values.workbench.mlflowInstance | quote }}
+    {{- end }}
 spec:
   template:
     spec:
       {{- include "tableschnappi.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "tableschnappi.workbenchServiceAccount" . }}
       initContainers:
-        - name: clone-repo
-          image: registry.access.redhat.com/ubi9/python-311:latest
+        - name: prepare-source
+          image: {{ .Values.workbench.image | quote }}
           command:
             - /bin/bash
-            - -c
+            - -ec
             - |
-              set -e
               TARGET=/opt/app-root/src/tableschnappi
-              if [ -d "$TARGET/.git" ]; then
-                echo "Repo already cloned — pulling latest"
-                cd "$TARGET" && git pull || true
-              else
-                pip install -q gitpython 2>/dev/null
-                python3 -c "
-              import git, os
-              token = os.environ.get('GITHUB_TOKEN', '')
-              url = '{{ .Values.workbench.repoUrl }}'
-              if token:
-                  url = url.replace('https://', f'https://{token}@')
-              git.Repo.clone_from(url, '/opt/app-root/src/tableschnappi')
-              print('Cloned', url.split('@')[-1])
-              "
+              mkdir -p "$TARGET"
+              {{- if .Values.workbench.sourceConfigMap }}
+              if [ -z "$(ls -A "$TARGET")" ]; then
+                tar xzf /seed/source.tar.gz -C "$TARGET"
+                cp /seed/SOURCE_COMMIT /opt/app-root/src/.tableschnappi-source
               fi
+              {{- range .Values.workbench.seedFiles }}
+              if [ ! -e /opt/app-root/src/{{ . | quote }} ]; then
+                cp /seed/{{ . | quote }} /opt/app-root/src/
+              fi
+              {{- end }}
+              {{- else }}
+              if [ ! -d "$TARGET/.git" ] && [ -z "$(ls -A "$TARGET")" ]; then
+                git -C "$TARGET" init -q
+                git -C "$TARGET" remote add origin "$SOURCE_REPOSITORY"
+              fi
+              # Retry an interrupted first fetch, but never reset an existing checkout.
+              if [ -d "$TARGET/.git" ] && ! git -C "$TARGET" rev-parse --verify HEAD >/dev/null 2>&1; then
+                if [ -n "${GITHUB_TOKEN:-}" ]; then
+                  cat > /tmp/git-askpass <<'ASKPASS'
+              #!/bin/sh
+              case "$1" in
+                *Username*) printf '%s\n' x-access-token ;;
+                *Password*) printf '%s\n' "$GITHUB_TOKEN" ;;
+              esac
+              ASKPASS
+                  chmod 700 /tmp/git-askpass
+                  export GIT_ASKPASS=/tmp/git-askpass
+                fi
+                export GIT_TERMINAL_PROMPT=0
+                git -C "$TARGET" fetch --depth=1 origin "$SOURCE_REF"
+                git -C "$TARGET" checkout --detach FETCH_HEAD
+              fi
+              {{- end }}
           env:
+            - name: SOURCE_REPOSITORY
+              value: {{ .Values.workbench.repoUrl | quote }}
+            - name: SOURCE_REF
+              value: {{ .Values.workbench.repoRef | quote }}
             {{- if .Values.workbench.githubTokenSecret }}
             - name: GITHUB_TOKEN
               valueFrom:
@@ -63,9 +89,13 @@ spec:
           volumeMounts:
             - name: notebooks
               mountPath: /opt/app-root/src
+            {{- if .Values.workbench.sourceConfigMap }}
+            - name: seed
+              mountPath: /seed
+              readOnly: true
+            {{- end }}
           resources:
-            requests: { memory: "256Mi", cpu: "100m" }
-            limits: { memory: "512Mi", cpu: "500m" }
+            {{- toYaml .Values.resources.workbenchInit | nindent 12 }}
           securityContext:
             {{- include "tableschnappi.securityContext" . | nindent 12 }}
       containers:
@@ -79,7 +109,7 @@ spec:
               protocol: TCP
           env:
             - name: NOTEBOOK_BASE_URL
-              value: "/notebook/{{ .Release.Namespace }}/{{ include "tableschnappi.fullname" . }}-workbench"
+              value: "/notebook/{{ .Release.Namespace }}/{{ include "tableschnappi.workbenchName" . }}"
             # Through the model helpers, like every other template. These read
             # .Values.rhoai.vllm* directly, which are empty by default — so the
             # notebooks' configuration cell would have been handed blanks and
@@ -93,7 +123,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "tableschnappi.modelSecretName" . }}
-                  key: token
+                  key: {{ .Values.model.secretKey | quote }}
             {{- end }}
             # The one value the notebooks want that the chart never supplied.
             # Every one of them carried a 30-line detect_cluster_domain() that
@@ -110,37 +140,49 @@ spec:
               value: "http://{{ include "tableschnappi.fullname" . }}-guardrails.{{ .Release.Namespace }}.svc.cluster.local:80"
             - name: ASSISTANT_URL
               value: "http://{{ include "tableschnappi.mlflowProxyService" . }}.{{ .Release.Namespace }}.svc.cluster.local:8000"
-            - name: MLFLOW_TRACKING_URI
-              value: {{ .Values.rhoai.mlflowUri | quote }}
+            {{- if .Values.mlflow.enabled }}
+            # URI/auth are injected by the native Notebook MLflow annotation.
             - name: MLFLOW_WORKSPACE
               value: {{ .Release.Namespace | quote }}
             - name: MLFLOW_TRACKING_INSECURE_TLS
               value: "true"
-            - name: MLFLOW_TRACKING_AUTH
-              value: "kubernetes-namespaced"
-            - name: MLFLOW_K8S_INTEGRATION
-              value: "true"
+            {{- end }}
+            - name: MODEL_BASE_URL
+              value: "{{ include "tableschnappi.modelEndpoint" . }}/v1"
+            - name: MODEL_NAME
+              value: {{ include "tableschnappi.modelName" . | quote }}
+            {{- if include "tableschnappi.modelAuthEnabled" . }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tableschnappi.modelSecretName" . }}
+                  key: {{ .Values.model.secretKey | quote }}
+            {{- end }}
           resources:
-            requests: { cpu: "2", memory: "4Gi" }
-            limits: { cpu: "4", memory: "8Gi" }
+            {{- toYaml .Values.resources.workbench | nindent 12 }}
           volumeMounts:
             - name: notebooks
               mountPath: /opt/app-root/src
           readinessProbe:
             httpGet:
-              path: /notebook/{{ .Release.Namespace }}/{{ include "tableschnappi.fullname" . }}-workbench/api
+              path: /notebook/{{ .Release.Namespace }}/{{ include "tableschnappi.workbenchName" . }}/api
               port: 8888
             initialDelaySeconds: 30
             periodSeconds: 5
             failureThreshold: 6
           livenessProbe:
             httpGet:
-              path: /notebook/{{ .Release.Namespace }}/{{ include "tableschnappi.fullname" . }}-workbench/api
+              path: /notebook/{{ .Release.Namespace }}/{{ include "tableschnappi.workbenchName" . }}/api
               port: 8888
             initialDelaySeconds: 60
             periodSeconds: 10
       volumes:
         - name: notebooks
           persistentVolumeClaim:
-            claimName: {{ include "tableschnappi.fullname" . }}-workbench
+            claimName: {{ include "tableschnappi.workbenchName" . }}
+        {{- if .Values.workbench.sourceConfigMap }}
+        - name: seed
+          configMap:
+            name: {{ .Values.workbench.sourceConfigMap | quote }}
+        {{- end }}
 {{- end }}

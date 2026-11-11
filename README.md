@@ -301,29 +301,35 @@ helm install tableschnappi charts/tableschnappi \
 oc get route tableschnappi-frontend -n tableschnappi-$(oc whoami)
 ```
 
-Helm hooks run automatically in order:
+For isolated per-participant releases with configurable workbench identity,
+pinned source/images and no per-user pipeline database, use the
+[multi-user chart profile and lifecycle guide](charts/tableschnappi/README.md).
+
+The model Secret (if chart-created), service accounts and RoleBindings are
+normal release resources. Hooks then run automatically in order:
 
 | Hook | Type | What it does |
 |---|---|---|
-| `model-secret` | pre-install (weight -2) | Creates the token Secret, ahead of the hooks that mount it |
-| `wait-mlflow` | pre-install (weight 0) | Polls MLflow until ready (max 5 min) |
-| `seed-mlflow` | pre-install (weight 1) | Creates experiment + registers `restaurant-assistant-prompt@v1` |
-| `wait-model` | pre-install (weight 2) | Checks the endpoint answers and serves your model, so a wrong URL or token fails here rather than as a broken chat |
+| `wait-mlflow` | post-install/post-upgrade (weight 0) | Polls MLflow until ready (max 5 min) |
+| `seed-mlflow` | post-install/post-upgrade (weight 1) | Creates the experiment and initial prompt only if missing; preserves participant prompt versions |
+| `wait-model` | post-install/post-upgrade (weight 2) | Checks the endpoint answers and serves your model, so a wrong URL or token fails here rather than as a broken chat |
 | `smoke-test` | post-install (weight 10) | Hits every service health endpoint; fails the release if anything is down |
 | `garak-eval` | post-install (weight 11) | Garak safety sweep — only runs when `garak.enabled=true` |
-| `import-pipeline` | post-install (weights 19, 20) | Imports the sekki ingestion pipeline — only with `workbench.enabled=true` |
+| `import-pipeline` | post-install (weights 19, 20) | Imports the sekki ingestion pipeline — only with `workbench.enabled=true` and `workbench.pipelines.enabled=true` |
 
 ## Configuration Reference
 
 | Value | Default | Description |
 |---|---|---|
 | `image.registry` | `quay.io/tableschnappi` | Container registry prefix |
+| `components.<name>.image` | `""` | Full image reference/digest override; empty retains shared registry/tag behavior |
 | `image.tag` | `latest` | Image tag for all services |
+| `model.secretKey` | `token` | Secret key shared by assistant, NeMo, workbench and hooks |
 | `model.mode` | `self-hosted` | `self-hosted` for a model you run in the cluster, `maas` for a shared gateway |
 | `model.endpoint` | _(required)_ | OpenAI-compatible base URL, **without** a trailing `/v1` — the chart appends it |
 | `model.name` | _(required)_ | Exact model string the endpoint expects. Must support tool calling |
 | `model.apiKey` | `""` | Bearer token. Helm creates the Secret from this, so no manual `oc create secret`. Pass with `--set` rather than committing it |
-| `model.existingSecret` | `""` | Use instead of `model.apiKey` to reference a Secret you manage yourself, with the token under key `token` |
+| `model.existingSecret` | `""` | Use instead of `model.apiKey` to reference a Secret you manage yourself, with the key selected by `model.secretKey` (default `token`) |
 | `rhoai.appsDomain` | _(required)_ | Cluster apps domain for Route hostnames |
 | `rhoai.mlflowUri` | _(required if `mlflow.enabled`)_ | RHOAI MLflow tracking URI |
 | `rhoai.maasHost` | _(required if MCP gateway registration is wanted)_ | MaaS gateway hostname for the GenAI Studio HTTPRoute. Unrelated to `model.endpoint` |
@@ -589,23 +595,21 @@ Add `QUAY_USERNAME` and `QUAY_PASSWORD` as GitHub repository secrets to enable C
 
 ## Uninstall
 
+Export workbench files first: the release owns its PVC. For 0.1 hook-resource
+adoption before upgrading, see the [chart lifecycle guide](charts/tableschnappi/README.md#upgrade-and-cleanup).
+
+
 ```bash
-helm uninstall tableschnappi -n tableschnappi-$(oc whoami)
-oc delete namespace tableschnappi-$(oc whoami)
-
-# Cluster-level resources (instructor / admin).
-# These live in the gateway namespace and are named after YOUR release
-# namespace, not after the chart — Helm does not remove them for you.
 NS=tableschnappi-$(oc whoami)
-GW=$(helm get values tableschnappi -n "$NS" -a -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["rhoai"]["gatewayNamespace"])')
-
-oc delete mcpserverregistration "$NS"     -n "$GW" --ignore-not-found
-oc delete httproute             "$NS-mcp" -n "$GW" --ignore-not-found
-oc delete referencegrant        "$NS-mcp-gateway" -n "$NS" --ignore-not-found
-
-# Only if you enabled genaiStudio (shared, cluster-wide — check nobody else is using it):
-oc delete configmap gen-ai-aa-mcp-servers -n redhat-ods-applications
+helm uninstall tableschnappi -n "$NS" --wait
+# If garak was enabled, inspect/export its retained result Job, then remove it:
+oc delete job tableschnappi-garak-eval -n "$NS" --ignore-not-found
+# Delete this participant project only after exports and release cleanup:
+oc delete namespace "$NS"
 ```
 
-> The ServiceAccount and RoleBinding are Helm hooks, so `helm uninstall` leaves
-> them behind too: `oc delete sa,rolebinding -l app.kubernetes.io/name=tableschnappi -n "$NS"`.
+In 0.2 the release-owned service accounts, RoleBindings and chart-created model
+Secret are removed by Helm. Supplied Secrets, shared MLflow/storage and external
+image-pull grants remain the platform administrator's responsibility. Inspect
+failed/retained hook Jobs before removing the project. Shared Gen AI Studio MCP
+registration must stay disabled for per-participant releases.

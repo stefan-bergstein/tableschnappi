@@ -25,9 +25,11 @@ data:
         parameters:
           base_url: {{ include "tableschnappi.modelEndpoint" . }}/v1
           ssl_verify: false
+          {{- if .Values.model.extraBody }}
           extra_body:
             chat_template_kwargs:
               enable_thinking: false
+          {{- end }}
 
     passthrough: true
 
@@ -58,7 +60,7 @@ spec:
       valueFrom:
         secretKeyRef:
           name: {{ include "tableschnappi.modelSecretName" . }}
-          key: token
+          key: {{ .Values.model.secretKey | quote }}
       {{- else }}
       # The OpenAI-compatible client requires a value; unauthenticated vLLM
       # endpoints ignore it.

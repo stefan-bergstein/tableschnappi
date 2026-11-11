@@ -1,0 +1,33 @@
+{{- if .Values.aiAsset.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gen-ai-aa-custom-model-endpoints
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tableschnappi.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    providers:
+      inference:
+      - provider_id: endpoint-1
+        provider_type: remote::openai
+        config:
+          base_url: {{ printf "%s/v1" (include "tableschnappi.modelEndpoint" .) | quote }}
+          allowed_models:
+          - {{ include "tableschnappi.modelName" . | quote }}
+          {{- if include "tableschnappi.modelAuthEnabled" . }}
+          custom_gen_ai:
+            api_key:
+              secretRef:
+                name: {{ include "tableschnappi.modelSecretName" . | quote }}
+                key: {{ .Values.model.secretKey | quote }}
+          {{- end }}
+    registered_resources:
+      models:
+      - provider_id: endpoint-1
+        model_id: {{ include "tableschnappi.modelName" . | quote }}
+        model_type: llm
+        metadata:
+          display_name: {{ default (include "tableschnappi.modelName" .) .Values.aiAsset.displayName | quote }}
+{{- end }}

@@ -46,8 +46,8 @@ model:
   #   curl <endpoint>/v1/models
   name: ""
 
-  # Only for an authenticated gateway. Helm creates the Secret from this;
-  # prefer --set model.apiKey=... over committing it here.
+  # Prefer model.existingSecret for an authenticated gateway, keeping the key
+  # outside Helm values and release history.
   apiKey: ""
 
 # The workshop notebooks live in a workbench, so the "full workshop" profile
